@@ -4,6 +4,28 @@
 
 #pragma comment( lib, "imm32.lib")
 
+// Windows 11 の識別
+bool isWindows11OrLater() {
+    DWORD major = 0, minor = 0, build = 0;
+    HMODULE hMod = ::GetModuleHandleW(L"ntdll.dll");
+    if (hMod) {
+        typedef LONG (WINAPI* RtlGetVersionPtr)(PRTL_OSVERSIONINFOW);
+        RtlGetVersionPtr fxPtr = (RtlGetVersionPtr)::GetProcAddress(hMod, "RtlGetVersion");
+        if (fxPtr != nullptr) {
+            RTL_OSVERSIONINFOW rovi = { 0 };
+            rovi.dwOSVersionInfoSize = sizeof(rovi);
+            if (fxPtr(&rovi) == 0) {
+                major = rovi.dwMajorVersion;
+                minor = rovi.dwMinorVersion;
+                build = rovi.dwBuildNumber;
+                return (major == 10 && build >= 22000);
+            }
+        }
+    }
+    return false;
+}
+
+
 // ウィンドウクラス名取得用のバッファサイズ
 #define CLASSNAME_MAX 1024
 
@@ -786,8 +808,11 @@ struct WindowEx
 		// ★―― 最大化時の余白を殺す ――★
 		case WM_NCCALCSIZE:
 		{
-			if (mes->WParam && ::IsZoomed(cachedHWND))
-			{
+			static bool isWin11 = isWindows11OrLater();  // 毎回判定しないよう static に
+			if (!isWin11)
+				break;
+
+			if (mes->WParam && ::IsZoomed(cachedHWND)) {
 				auto *p = reinterpret_cast<NCCALCSIZE_PARAMS*>(mes->LParam);
 
 				MONITORINFO mi{ sizeof(mi) };
@@ -795,26 +820,30 @@ struct WindowEx
 					MonitorFromWindow(cachedHWND, MONITOR_DEFAULTTONEAREST),
 					&mi);
 
-				// ── クライアント矩形を計算 ──
-				// 左・右・下はワークエリアぴったり
-				p->rgrc[0].left   = mi.rcWork.left;
-				p->rgrc[0].right  = mi.rcWork.right;
-				p->rgrc[0].bottom = mi.rcWork.bottom;
+				UINT dpi = GetDpiForWindow(cachedHWND);
+				HMENU menu = ::GetMenu(cachedHWND);
+				const int cyMenu = menu ? GetSystemMetricsForDpi(SM_CYMENU, dpi) : 0;
 
-				// 上だけ「タイトルバー高さ」ぶん下げる
-				const int cyCaption = GetSystemMetrics(SM_CYCAPTION)
-									+ GetSystemMetrics(SM_CYFRAME); // DWM 枠
-				p->rgrc[0].top    = mi.rcWork.top + cyCaption;
+				// Windows 11 の処理だけ
+				p->rgrc[0].left   = mi.rcMonitor.left;
+				p->rgrc[0].right  = mi.rcMonitor.right;
+				p->rgrc[0].bottom = mi.rcMonitor.bottom;
+
+				const int cyCaption = GetSystemMetricsForDpi(SM_CYCAPTION, dpi);
+				p->rgrc[0].top = mi.rcMonitor.top + cyCaption + cyMenu;
 
 				mes->Result = 0;
-				return true;   // ここで処理完了
+				return true;
 			}
-			break;             // 通常時は既存ロジックへ
+			break;
 		}
-
 
 		case WM_GETMINMAXINFO:
 		{
+			static bool isWin11 = isWindows11OrLater();  // 同様に static でキャッシュ
+			if (!isWin11)
+				break;
+
 			auto *mmi = reinterpret_cast<MINMAXINFO*>(mes->LParam);
 
 			MONITORINFO mi{ sizeof(mi) };
@@ -822,11 +851,10 @@ struct WindowEx
 				MonitorFromWindow(cachedHWND, MONITOR_DEFAULTTONEAREST),
 				&mi);
 
-			// “最大化したらワークエリアぴったり” の座標を渡す
-			mmi->ptMaxPosition.x = mi.rcWork.left  - mi.rcMonitor.left;
-			mmi->ptMaxPosition.y = mi.rcWork.top   - mi.rcMonitor.top;
-			mmi->ptMaxSize.x     = mi.rcWork.right - mi.rcWork.left;
-			mmi->ptMaxSize.y     = mi.rcWork.bottom- mi.rcWork.top;
+			mmi->ptMaxPosition.x = 0;
+			mmi->ptMaxPosition.y = 0;
+			mmi->ptMaxSize.x = mi.rcMonitor.right - mi.rcMonitor.left;
+			mmi->ptMaxSize.y = mi.rcMonitor.bottom - mi.rcMonitor.top;
 
 			mes->Result = 0;
 			return true;
