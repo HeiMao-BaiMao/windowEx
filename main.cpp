@@ -808,30 +808,29 @@ struct WindowEx
 		// ★―― 最大化時の余白を殺す ――★
 		case WM_NCCALCSIZE:
 		{
-			static bool isWin11 = isWindows11OrLater();  // 毎回判定しないよう static に
+			static bool isWin11 = isWindows11OrLater();
 			if (!isWin11)
 				break;
-
+		
 			if (mes->WParam && ::IsZoomed(cachedHWND)) {
 				auto *p = reinterpret_cast<NCCALCSIZE_PARAMS*>(mes->LParam);
-
+		
 				MONITORINFO mi{ sizeof(mi) };
-				GetMonitorInfo(
-					MonitorFromWindow(cachedHWND, MONITOR_DEFAULTTONEAREST),
-					&mi);
-
+				if (!GetMonitorInfo(MonitorFromWindow(cachedHWND, MONITOR_DEFAULTTONEAREST), &mi)) {
+					break; // エラーハンドリング追加
+				}
+		
 				UINT dpi = GetDpiForWindow(cachedHWND);
+				if (dpi == 0) dpi = 96; // フォールバック値
+		
 				HMENU menu = ::GetMenu(cachedHWND);
 				const int cyMenu = menu ? GetSystemMetricsForDpi(SM_CYMENU, dpi) : 0;
-
-				// Windows 11 の処理だけ
-				p->rgrc[0].left   = mi.rcMonitor.left;
-				p->rgrc[0].right  = mi.rcMonitor.right;
-				p->rgrc[0].bottom = mi.rcMonitor.bottom;
-
 				const int cyCaption = GetSystemMetricsForDpi(SM_CYCAPTION, dpi);
-				p->rgrc[0].top = mi.rcMonitor.top + cyCaption + cyMenu;
-
+		
+				// DPIスケーリングを考慮した座標調整
+				p->rgrc[0] = mi.rcMonitor;
+				p->rgrc[0].top += cyCaption + cyMenu;
+		
 				mes->Result = 0;
 				return true;
 			}
