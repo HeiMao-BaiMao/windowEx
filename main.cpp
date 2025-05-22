@@ -783,6 +783,55 @@ struct WindowEx
 			}
 			break;
 
+		// ★―― 最大化時の余白を殺す ――★
+		case WM_NCCALCSIZE:
+		{
+			if (mes->WParam && ::IsZoomed(cachedHWND))
+			{
+				auto *p = reinterpret_cast<NCCALCSIZE_PARAMS*>(mes->LParam);
+
+				MONITORINFO mi{ sizeof(mi) };
+				GetMonitorInfo(
+					MonitorFromWindow(cachedHWND, MONITOR_DEFAULTTONEAREST),
+					&mi);
+
+				// ── クライアント矩形を計算 ──
+				// 左・右・下はワークエリアぴったり
+				p->rgrc[0].left   = mi.rcWork.left;
+				p->rgrc[0].right  = mi.rcWork.right;
+				p->rgrc[0].bottom = mi.rcWork.bottom;
+
+				// 上だけ「タイトルバー高さ」ぶん下げる
+				const int cyCaption = GetSystemMetrics(SM_CYCAPTION)
+									+ GetSystemMetrics(SM_CYFRAME); // DWM 枠
+				p->rgrc[0].top    = mi.rcWork.top + cyCaption;
+
+				mes->Result = 0;
+				return true;   // ここで処理完了
+			}
+			break;             // 通常時は既存ロジックへ
+		}
+
+
+		case WM_GETMINMAXINFO:
+		{
+			auto *mmi = reinterpret_cast<MINMAXINFO*>(mes->LParam);
+
+			MONITORINFO mi{ sizeof(mi) };
+			GetMonitorInfo(
+				MonitorFromWindow(cachedHWND, MONITOR_DEFAULTTONEAREST),
+				&mi);
+
+			// “最大化したらワークエリアぴったり” の座標を渡す
+			mmi->ptMaxPosition.x = mi.rcWork.left  - mi.rcMonitor.left;
+			mmi->ptMaxPosition.y = mi.rcWork.top   - mi.rcMonitor.top;
+			mmi->ptMaxSize.x     = mi.rcWork.right - mi.rcWork.left;
+			mmi->ptMaxSize.y     = mi.rcWork.bottom- mi.rcWork.top;
+
+			mes->Result = 0;
+			return true;
+		}
+
 		case WM_NCLBUTTONDOWN: callback(EXEV_NCMSDOWN, (int)LOWORD(mes->LParam), (int)HIWORD(mes->LParam), 0/*mbLeft*/,   (int)mes->WParam); break;
 		case WM_NCRBUTTONDOWN: callback(EXEV_NCMSDOWN, (int)LOWORD(mes->LParam), (int)HIWORD(mes->LParam), 1/*mbRight*/,  (int)mes->WParam); break;
 		case WM_NCMBUTTONDOWN: callback(EXEV_NCMSDOWN, (int)LOWORD(mes->LParam), (int)HIWORD(mes->LParam), 2/*mbMiddle*/, (int)mes->WParam); break;
@@ -1093,6 +1142,22 @@ public:
 			return TRUE;
 		}
 		static LRESULT WINAPI WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+			// WM_GETMINMAXINFO の処理を追加
+			if (msg == WM_GETMINMAXINFO) {
+				LPMINMAXINFO lpMMI = (LPMINMAXINFO)lp;
+				HMONITOR hMonitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+				MONITORINFO mi = { sizeof(mi) };
+				if (GetMonitorInfo(hMonitor, &mi)) {
+					RECT rcWork = mi.rcWork;
+					RECT rcMonitor = mi.rcMonitor;
+					lpMMI->ptMaxPosition.x = rcWork.left - rcMonitor.left;
+					lpMMI->ptMaxPosition.y = rcWork.top - rcMonitor.top;
+					lpMMI->ptMaxSize.x = rcWork.right - rcWork.left;
+					lpMMI->ptMaxSize.y = rcWork.bottom - rcWork.top;
+				}
+				return 0;
+			}
+
 			OverlayBitmap *self = reinterpret_cast<OverlayBitmap*>(::GetWindowLongPtr(hwnd, GWLP_USERDATA));
 			if (self != NULL && msg == WM_PAINT) {
 				self->onPaint(hwnd);
